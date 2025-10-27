@@ -1,0 +1,68 @@
+const int buttonPins[] = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, A0}; // pins of the keypad
+const int numButtons = 12;
+
+bool buttonStates[numButtons]; // Track previous states
+
+int LED = 13;
+int enterState = 0;
+bool sequenceComplete = false;
+
+// Define the correct sequence of button indices (0 = buttonPins[0] = pin 2)
+const int correctSequence[] = {0, 1, 2, 3, 4}; // Sequence: pins 2,3,4,5,6
+const int sequenceLength = sizeof(correctSequence) / sizeof(correctSequence[0]);
+
+void setup() {
+  Serial.begin(9600);
+  for (int i = 0; i < numButtons; i++) {
+    pinMode(buttonPins[i], INPUT_PULLUP);
+    buttonStates[i] = HIGH; // Initial state is not pressed
+  }
+  pinMode(LED, OUTPUT);
+  digitalWrite(LED, LOW);
+}
+
+void loop() {
+  for (int i = 0; i < numButtons; i++) {
+    int currentState = digitalRead(buttonPins[i]);
+    if (buttonStates[i] == HIGH && currentState == LOW) {
+      Serial.print("Button ");
+      Serial.print(i + 1);
+      Serial.print(" (Pin ");
+      Serial.print(buttonPins[i]);
+      Serial.println(") is pressed.");
+
+      // Handle sequence entry
+      if (!sequenceComplete) {
+        if (enterState < sequenceLength && i == correctSequence[enterState]) {
+          Serial.print("Digit ");
+          Serial.print(enterState + 1);
+          Serial.println(" correct");
+          enterState++;
+          if (enterState == sequenceLength) {
+            Serial.println("Sequence complete. Press button 11 to confirm.");
+            sequenceComplete = true;
+          }
+        } else {
+          resetDigit(); // Wrong button pressed
+        }
+      } else {
+        // Sequence is complete, wait for confirmation button
+        if (i == 10) { // Button 11 (index 10 = pin 12)
+          Serial.println("Code accepted!");
+          digitalWrite(LED, HIGH); // Turn on LED
+        } else {
+          resetDigit(); // Any other button resets
+        }
+      }
+    }
+
+    buttonStates[i] = currentState;
+  }
+}
+
+void resetDigit() {
+  enterState = 0;
+  sequenceComplete = false;
+  digitalWrite(LED, LOW); // Turn off LED
+  Serial.println("Reset the digits / wrong code");
+}
