@@ -66,3 +66,4 @@ void resetDigit() {
   digitalWrite(LED, LOW); // Turn off LED
   Serial.println("Reset the digits / wrong code");
 }
+// nice
