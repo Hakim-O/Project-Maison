@@ -4,7 +4,7 @@ const int numButtons = 12;
 bool buttonStates[numButtons]; // Track previous states
 
 int LED = 13; // led pin
-int enterState = 0;
+int enterState = 0; //créer un state
 bool sequenceComplete = false;
 
 // Define the correct sequence of button indices (0 = buttonPins[0] = pin 2)
