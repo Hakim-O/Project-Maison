@@ -1,0 +1,86 @@
+#include "Particle.h"
+
+SYSTEM_MODE(AUTOMATIC);
+SerialLogHandler logHandler(LOG_LEVEL_INFO);
+
+// === Pin configuration ===
+const uint8_t LOCK_PIN = D4;       // MOSFET for lock
+const uint8_t LIGHT_PIN = D5;      // MOSFET for light bulb
+const uint8_t LED_PIN = D7;        // Optional onboard LED mirrors lock state
+
+// === State variables ===
+bool lockState = false;            // false = LOCKED, true = UNLOCKED
+int pv_lockState = 0;              // 0 = locked, 1 = unlocked
+int pv_lightState = 0;             // 0 = off, 1 = on
+
+// Forward declaration
+int cloudSetLock(String command);
+
+void setup() {
+    Serial.begin(9600);
+    waitFor(Serial.isConnected, 5000);
+    Serial.println("=== Lock + Light Controller ===");
+
+    pinMode(LOCK_PIN, OUTPUT);
+    pinMode(LIGHT_PIN, OUTPUT);
+    pinMode(LED_PIN, OUTPUT);
+
+    // Start locked / light off
+    lockState = false;
+    digitalWrite(LOCK_PIN, LOW);
+    digitalWrite(LIGHT_PIN, LOW);
+    digitalWrite(LED_PIN, LOW);
+
+    // Particle cloud interface
+    Particle.variable("lockState", &pv_lockState, INT);
+    Particle.variable("lightState", &pv_lightState, INT);
+    Particle.function("setLock", cloudSetLock);
+
+    Log.info("Setup complete — lock is LOCKED and light is OFF by default.");
+}
+
+void loop() {
+    // Keep hardware in sync with lockState
+    digitalWrite(LOCK_PIN, lockState ? HIGH : LOW);
+    digitalWrite(LIGHT_PIN, lockState ? HIGH : LOW); // Light mirrors lock
+    digitalWrite(LED_PIN, lockState ? HIGH : LOW);
+
+    pv_lockState = lockState ? 1 : 0;
+    pv_lightState = lockState ? 1 : 0;
+
+    delay(10); // small loop delay
+}
+
+// --- Cloud function ---
+int cloudSetLock(String command) {
+    command.toLowerCase();
+    Serial.printlnf("[CLOUD] setLock called: %s", command.c_str());
+
+    if (command == "lock") {
+        lockState = false;
+    } else if (command == "unlock") {
+        lockState = true;
+    } else {
+        Serial.println("[CLOUD WARNING] Invalid command (use 'lock' or 'unlock').");
+        Log.warn("Invalid setLock param: %s", command.c_str());
+        return -1;
+    }
+
+    // Update hardware immediately
+    digitalWrite(LOCK_PIN, lockState ? HIGH : LOW);
+    digitalWrite(LIGHT_PIN, lockState ? HIGH : LOW);
+    digitalWrite(LED_PIN, lockState ? HIGH : LOW);
+
+    pv_lockState = lockState ? 1 : 0;
+    pv_lightState = lockState ? 1 : 0;
+
+    Serial.printlnf("[CLOUD ACTION] Lock -> %s, Light -> %s",
+                    lockState ? "UNLOCKED" : "LOCKED",
+                    lockState ? "ON" : "OFF");
+
+    Log.info("Cloud action -> Lock: %s, Light: %s",
+             lockState ? "UNLOCKED" : "LOCKED",
+             lockState ? "ON" : "OFF");
+
+    return 1;
+}
