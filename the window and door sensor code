@@ -1,0 +1,55 @@
+#include "Particle.h"
+
+void onDataReceived(const uint8_t* data, size_t len, const BlePeerDevice& peer, void* context);
+
+// BLE UUIDs (Nordic UART)
+const BleUuid serviceUuid("6E400001-B5A3-F393-E0A9-E50E24DCCA9E");
+const BleUuid rxUuid("6E400002-B5A3-F393-E0A9-E50E24DCCA9E");
+const BleUuid txUuid("6E400003-B5A3-F393-E0A9-E50E24DCCA9E");
+
+// Characteristics
+BleCharacteristic txCharacteristic("tx", BleCharacteristicProperty::NOTIFY, txUuid, serviceUuid);
+BleCharacteristic rxCharacteristic("rx", BleCharacteristicProperty::WRITE_WO_RSP, rxUuid, serviceUuid, onDataReceived, NULL);
+
+// Pins (renamed to avoid conflict)
+const uint8_t BTN1 = D6;
+const uint8_t BTN2 = D5;
+const uint8_t BTN3 = D4;
+const uint8_t LED_PIN = D7;
+
+void onDataReceived(const uint8_t* data, size_t len, const BlePeerDevice& peer, void* context) {
+    if (data[0] == 1 || data[0] == '1') {
+        digitalWrite(LED_PIN, HIGH);
+    } else if (data[0] == 0 || data[0] == '0') {
+        digitalWrite(LED_PIN, LOW);
+    }
+}
+
+void setup() {
+    pinMode(LED_PIN, OUTPUT);
+    digitalWrite(LED_PIN, LOW);
+    pinMode(BTN1, INPUT_PULLDOWN);
+    pinMode(BTN2, INPUT_PULLDOWN);
+    pinMode(BTN3, INPUT_PULLDOWN);
+
+    BLE.on();
+    BLE.addCharacteristic(txCharacteristic);
+    BLE.addCharacteristic(rxCharacteristic);
+
+    BleAdvertisingData data;
+    data.appendServiceUUID(serviceUuid);
+    data.appendLocalName("Antoine4");
+    BLE.advertise(&data);
+}
+
+void loop() {
+    if (BLE.connected()) {
+        uint8_t txBuf[3] = {
+            digitalRead(BTN1),
+            digitalRead(BTN2),
+            digitalRead(BTN3)
+        };
+        txCharacteristic.setValue(txBuf, sizeof(txBuf));
+        delay(500);
+    }
+}
