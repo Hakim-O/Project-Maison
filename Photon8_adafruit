@@ -1,0 +1,90 @@
+#include <MQTT.h>
+#include "Particle.h"
+#include "MQTT.h"
+
+// MQTT
+const char* mqtt_server = "io.adafruit.com";
+const int mqtt_port = 1883;
+const char* mqtt_user = "Photon8";
+const char* mqtt_password = "aio_HmPI73vXZjyHWwgCeoJIjhLRUsk5";
+char client_id[64] = "Photon8GGmonPhoton2TxRx";
+
+const char* sub_topic = "Photon8/feeds/button";
+
+MQTT client(mqtt_server, mqtt_port, callback);
+
+// Pins
+const uint8_t BTN1 = D6;
+const uint8_t BTN2 = D5;
+const uint8_t BTN3 = D4;
+
+void setup() {
+    Serial.begin(9600);
+    pinMode(BTN1, INPUT_PULLDOWN);
+    pinMode(BTN2, INPUT_PULLDOWN);
+    pinMode(BTN3, INPUT_PULLDOWN);
+}
+
+void publishState(const char* topic, bool state) {
+    client.publish(topic, state ? "ON" : "OFF");
+}
+
+void loop() {
+
+    // ---- MQTT Connection Handling ----
+    if (client.isConnected()) {
+        client.loop();
+    } else {
+        Serial.println("MQTT Disconnected. Attempting reconnect...");
+        if (client.connect(client_id, mqtt_user, mqtt_password)) {
+            Serial.println("MQTT connected!");
+
+            client.subscribe(sub_topic);
+        } else {
+            Serial.println("MQTT connection failed.");
+        }
+        delay(2000);
+    }
+
+    // ---- Read sensors ----
+    bool w1 = digitalRead(BTN3);
+    bool w2 = digitalRead(BTN1);
+    bool door = digitalRead(BTN2);
+    
+    Serial.print("W1=");
+    Serial.print(w1);
+    Serial.print("  W2=");
+    Serial.print(w2);
+    Serial.print("  DOOR=");
+    Serial.println(door);
+
+    static bool prevW1 = !w1;
+    static bool prevW2 = !w2;
+    static bool prevDoor = !door;
+
+    // ---- Send sensor changes IMMEDIATELY ----
+    if (w1 != prevW1) {
+        publishState("Photon8/feeds/window1", w1);
+        prevW1 = w1;
+    }
+
+    if (w2 != prevW2) {
+        publishState("Photon8/feeds/window2", w2);
+        prevW2 = w2;
+    }
+
+    if (door != prevDoor) {
+        publishState("Photon8/feeds/door", door);
+        prevDoor = door;
+    }
+
+    delay(50); // small debounce + CPU relief
+}
+
+// MQTT callback
+void callback(char* topic, byte* payload, unsigned int length) {
+    char buf[length + 1];
+    memcpy(buf, payload, length);
+    buf[length] = '\0';
+    Serial.println(buf);
+}
