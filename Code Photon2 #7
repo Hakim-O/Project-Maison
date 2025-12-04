@@ -1,0 +1,180 @@
+#include "Particle.h"
+
+SYSTEM_MODE(AUTOMATIC);
+SerialLogHandler logHandler(LOG_LEVEL_INFO);
+
+// === Pin configuration ===
+const uint8_t LOCK_PIN   = D4;  // MOSFET for lock
+const uint8_t LIGHT_PIN  = D5;  // MOSFET for light bulb
+const uint8_t LED_PIN    = D7;  // Onboard LED mirrors system state
+const uint8_t BUZZER_PIN = D6;  // Active buzzer via S8050 transistor
+
+// === BLE UUIDs ===
+const BleUuid serviceUuid("19B10010-E8F2-537E-4F6C-D104768A1214");
+const BleUuid controlUuid("19B10011-E8F2-537E-4F6C-D104768A1214");
+
+// === State variables ===
+bool lockState = false;         // independent lock
+bool systemActive = false;      // light + LED + buzzer group
+
+int pv_lockState = 0;
+int pv_lightState = 0;
+
+// === Buzzer timing ===
+unsigned long lastBuzzTime = 0;
+bool buzzerOn = false;
+const unsigned long buzzOnTime  = 500;
+const unsigned long buzzOffTime = 1500;
+
+// === Forward declarations ===
+int cloudSetLock(String command);
+int cloudSetSystem(String command);
+void updateLockState(bool unlocked);
+void updateSystemState(bool active);
+void onDataReceived(const uint8_t* data, size_t len, const BlePeerDevice& peer, void* context);
+
+// === BLE characteristic ===
+BleCharacteristic controlCharacteristic(
+    "control",
+    BleCharacteristicProperty::WRITE_WO_RSP,
+    controlUuid,
+    serviceUuid,
+    onDataReceived,
+    NULL
+);
+
+// === Setup ===
+void setup() {
+    Serial.begin(9600);
+    waitFor(Serial.isConnected, 5000);
+    Serial.println("=== Lock + System (Light/LED/Buzzer) + BLE Peripheral ===");
+
+    pinMode(LOCK_PIN, OUTPUT);
+    pinMode(LIGHT_PIN, OUTPUT);
+    pinMode(LED_PIN, OUTPUT);
+    pinMode(BUZZER_PIN, OUTPUT);
+
+    digitalWrite(LOCK_PIN, LOW);
+    digitalWrite(LIGHT_PIN, LOW);
+    digitalWrite(LED_PIN, LOW);
+    digitalWrite(BUZZER_PIN, LOW);
+
+    // Particle cloud
+    Particle.variable("lockState", &pv_lockState, INT);
+    Particle.variable("lightState", &pv_lightState, INT);
+
+    Particle.function("setLock", cloudSetLock);
+    Particle.function("setSystem", cloudSetSystem);
+
+    // === BLE setup ===
+    BLE.on();
+    BLE.addCharacteristic(controlCharacteristic);
+    BleAdvertisingData data;
+    data.appendLocalName("Vincent");
+    data.appendServiceUUID(serviceUuid);
+    BLE.advertise(&data);
+
+    Serial.println("BLE advertising started");
+}
+
+// === Main loop ===
+void loop() {
+    Particle.process();
+
+    // Independent lock control
+    digitalWrite(LOCK_PIN, lockState ? HIGH : LOW);
+
+    // Grouped system components (light + LED + buzzer)
+    digitalWrite(LIGHT_PIN, systemActive ? HIGH : LOW);
+    digitalWrite(LED_PIN, systemActive ? HIGH : LOW);
+
+    pv_lockState  = lockState  ? 1 : 0;
+    pv_lightState = systemActive ? 1 : 0;
+
+    // Buzzer logic (part of systemActive)
+    if (systemActive) {
+        unsigned long now = millis();
+        if (buzzerOn && (now - lastBuzzTime >= buzzOnTime)) {
+            digitalWrite(BUZZER_PIN, LOW);
+            buzzerOn = false;
+            lastBuzzTime = now;
+        }
+        else if (!buzzerOn && (now - lastBuzzTime >= buzzOffTime)) {
+            digitalWrite(BUZZER_PIN, HIGH);
+            buzzerOn = true;
+            lastBuzzTime = now;
+        }
+    } else {
+        digitalWrite(BUZZER_PIN, LOW);
+        buzzerOn = false;
+        lastBuzzTime = millis();
+    }
+
+    delay(10);
+}
+
+// === BLE callback ===
+void onDataReceived(const uint8_t* data, size_t len, const BlePeerDevice& peer, void* context) {
+    if (len == 0) return;
+
+    Serial.printf("[BLE] Received: %c\n", data[0]);
+
+    // BLE commands
+    if (data[0] == '1') updateLockState(true);      // unlock
+    else if (data[0] == '0') updateLockState(false); // lock
+    else if (data[0] == '2') updateSystemState(true);  // activate system
+    else if (data[0] == '3') updateSystemState(false); // deactivate system
+}
+
+// === Lock only ===
+void updateLockState(bool unlocked) {
+    lockState = unlocked;
+    digitalWrite(LOCK_PIN, unlocked ? HIGH : LOW);
+
+    pv_lockState = unlocked ? 1 : 0;
+
+    Serial.printlnf("[STATE] Lock: %s",
+                    unlocked ? "UNLOCKED" : "LOCKED");
+}
+
+// === System: light + LED + buzzer ===
+void updateSystemState(bool active) {
+    systemActive = active;
+
+    digitalWrite(LIGHT_PIN, active ? HIGH : LOW);
+    digitalWrite(LED_PIN, active ? HIGH : LOW);
+
+    if (!active) {
+        digitalWrite(BUZZER_PIN, LOW);
+        buzzerOn = false;
+    }
+
+    pv_lightState = active ? 1 : 0;
+
+    Serial.printlnf("[STATE] System: %s",
+                    active ? "ACTIVE" : "OFF");
+}
+
+// === Cloud function: setLock ===
+int cloudSetLock(String command) {
+    command.toLowerCase();
+    Serial.printlnf("[CLOUD] setLock: %s", command.c_str());
+
+    if (command == "lock")      updateLockState(false);
+    else if (command == "unlock") updateLockState(true);
+    else return -1;
+
+    return 1;
+}
+
+// === Cloud function: setSystem ===
+int cloudSetSystem(String command) {
+    command.toLowerCase();
+    Serial.printlnf("[CLOUD] setSystem: %s", command.c_str());
+
+    if (command == "on")       updateSystemState(true);
+    else if (command == "off") updateSystemState(false);
+    else return -1;
+
+    return 1;
+}
