@@ -1,0 +1,169 @@
+
+#include <MQTT.h>
+#include "Particle.h"
+
+SYSTEM_MODE(AUTOMATIC);
+SerialLogHandler logHandler(LOG_LEVEL_INFO);
+
+// === Pin configuration ===
+const uint8_t LOCK_PIN   = D4;
+const uint8_t LIGHT_PIN  = D5;
+const uint8_t LED_PIN    = D7;
+const uint8_t BUZZER_PIN = D6;
+
+// === State variables ===
+bool lockState = false;      // independent lock
+bool systemActive = false;   // light + LED + buzzer group
+
+// === Buzzer timing ===
+unsigned long lastBuzzTime = 0;
+bool buzzerOn = false;
+const unsigned long buzzOnTime  = 500;
+const unsigned long buzzOffTime = 1500;
+
+// =========================
+// MQTT (Adafruit IO) config
+// =========================
+const char* mqtt_server = "io.adafruit.com";
+const int   mqtt_port   = 1883;
+
+// Adafruit IO credentials (fill in key)
+const char* mqtt_user     = "Sandvich";
+const char* mqtt_password = "aio_iKnK79vhfDa5jD3G4WCHFkFgGKKr";
+
+// Client ID
+char client_id[64] = "Sandvich_Photon2";
+
+// Command feeds
+const char* topic_lock_cmd   = "Sandvich/feeds/lock";
+const char* topic_system_cmd = "Sandvich/feeds/system";
+
+// MQTT callback declaration
+void callback(char* topic, byte* payload, unsigned int length);
+
+// MQTT client
+MQTT client(mqtt_server, mqtt_port, callback);
+
+// =========================
+// MQTT setup
+// =========================
+void setupMQTT() {
+    Particle.publishVitals(60);
+
+    if (client.isConnected()) return;
+
+    Serial.println("Attempting MQTT connect...");
+    if (client.connect(client_id, mqtt_user, mqtt_password)) {
+        Serial.println("MQTT connected!");
+
+        // Subscribe to command feeds only
+        client.subscribe(topic_lock_cmd);
+        client.subscribe(topic_system_cmd);
+    } else {
+        Serial.println("MQTT connect failed.");
+    }
+}
+
+// =========================
+// Setup
+// =========================
+void setup() {
+    Serial.begin(9600);
+    waitFor(Serial.isConnected, 3000);
+
+    Serial.println("=== Photon2 Lock + System (MQTT Receive-Only) ===");
+
+    pinMode(LOCK_PIN, OUTPUT);
+    pinMode(LIGHT_PIN, OUTPUT);
+    pinMode(LED_PIN, OUTPUT);
+    pinMode(BUZZER_PIN, OUTPUT);
+
+    digitalWrite(LOCK_PIN, LOW);
+    digitalWrite(LIGHT_PIN, LOW);
+    digitalWrite(LED_PIN, LOW);
+    digitalWrite(BUZZER_PIN, LOW);
+
+    setupMQTT();
+}
+
+// =========================
+// Main loop
+// =========================
+void loop() {
+    Particle.process();
+
+    // Ensure MQTT connected and service loop runs
+    if (!client.isConnected()) {
+        setupMQTT();
+        delay(2000);
+    } else {
+        client.loop();
+    }
+
+    // Buzzer logic (part of systemActive)
+    if (systemActive) {
+        unsigned long now = millis();
+        if (buzzerOn && (now - lastBuzzTime >= buzzOnTime)) {
+            digitalWrite(BUZZER_PIN, LOW);
+            buzzerOn = false;
+            lastBuzzTime = now;
+        } else if (!buzzerOn && (now - lastBuzzTime >= buzzOffTime)) {
+            digitalWrite(BUZZER_PIN, HIGH);
+            buzzerOn = true;
+            lastBuzzTime = now;
+        }
+    } else {
+        digitalWrite(BUZZER_PIN, LOW);
+        buzzerOn = false;
+        lastBuzzTime = millis();
+    }
+
+    delay(10);
+}
+
+// =========================
+// MQTT callback (commands)
+// =========================
+void callback(char* topic, byte* payload, unsigned int length) {
+    char msg[length + 1];
+    if (length > 0) memcpy(msg, payload, length);
+    msg[length] = '\0';
+
+    // Normalize to lowercase
+    for (unsigned int i = 0; i < length; i++) msg[i] = tolower(msg[i]);
+
+    Serial.print("[MQTT] Received on ");
+    Serial.print(topic);
+    Serial.print(": ");
+    Serial.println(msg);
+
+    if (strcmp(topic, topic_lock_cmd) == 0) {
+        if (strcmp(msg, "unlock") == 0 || strcmp(msg, "1") == 0) updateLockState(true);
+        else if (strcmp(msg, "lock") == 0 || strcmp(msg, "0") == 0) updateLockState(false);
+    }
+
+    if (strcmp(topic, topic_system_cmd) == 0) {
+        if (strcmp(msg, "on") == 0 || strcmp(msg, "1") == 0) updateSystemState(true);
+        else if (strcmp(msg, "off") == 0 || strcmp(msg, "0") == 0) updateSystemState(false);
+    }
+}
+
+// =========================
+// Update functions
+// =========================
+void updateLockState(bool unlocked) {
+    lockState = unlocked;
+    digitalWrite(LOCK_PIN, unlocked ? HIGH : LOW);
+    Serial.printlnf("[STATE] Lock: %s", unlocked ? "UNLOCKED" : "LOCKED");
+}
+
+void updateSystemState(bool active) {
+    systemActive = active;
+    digitalWrite(LIGHT_PIN, active ? HIGH : LOW);
+    digitalWrite(LED_PIN, active ? HIGH : LOW);
+    if (!active) {
+        digitalWrite(BUZZER_PIN, LOW);
+        buzzerOn = false;
+    }
+    Serial.printlnf("[STATE] System: %s", active ? "ACTIVE" : "OFF");
+}
